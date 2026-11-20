@@ -1,0 +1,42 @@
+# CallIt
+
+A parimutuel prediction market on GenLayer Bradbury for questions only judgment can settle. Anyone creates a market on a real-world question, traders stake GEN on YES or NO, and an AI validator jury resolves the outcome against criteria that were fixed on chain before the first stake. There is no price feed and no oracle key — the jury reads the named sources and judges.
+
+Live contract (Bradbury, chain 4221): 0xD09a048eD5c411B75855e1B016044ab139083A00
+Deploy transaction: 0x531d907675a338ff9411355a9f3191eaabb329b938afa9dde23bfc48b2809c63
+Source: `CallIt.py` in this repository (sha256 1a3aadd47c5273e17daf40fd403df1bf393dad4525a6fe1d9e97d5dc12d8f2e5)
+dApp: https://callit-ameer-hamza-s-projects2.vercel.app
+
+## How a market flows
+
+1. **Create — with a creator bond.** Anyone creates a market: a question (up to 280 characters), the exact resolution criteria (up to 1,000 characters), exactly 3 source URLs on three different domains, a trading close, and a resolution time at least one hour after the close — plus a **0.005 GEN creator bond**, paid with the creation call. All of it is committed on chain at creation and can never be edited — the standard the jury later applies is fixed before any money is staked, and the creator has money of their own riding on the market running its full course. The bond never enters the pools, the odds, or the fee math; it is tracked per market as HELD, RETURNED, or SPLIT.
+2. **Trade.** Anyone stakes GEN into the YES pool or the NO pool (minimum stake 0.001 GEN, up to 100 different traders per market). The pool ratio is the market's implied odds, shown live in the dApp. A trader can hold both sides in one position; stakes accumulate.
+3. **Resolve.** After the resolution time, anyone calls `resolve`. The jury fetches all three named sources — every one must answer, there is no partial-source resolution — cleans the page text, and judges it against the committed criteria: where at least two of the three sources agree, that majority decides. The verdict is YES, NO, or UNRESOLVED, each with its reason code (CRITERIA_MET, CRITERIA_NOT_MET, INSUFFICIENT_EVIDENCE), agreed by validator consensus under strict equality. A round whose sources cannot be fetched records an attempt and stores no verdict; anyone can retry.
+4. **Appeal.** Any position holder can appeal once within 24 hours by posting a 0.0001 GEN bond. The appeal buys one fresh resolution by a jury that is never shown the first verdict. The new verdict replaces the old one in full — including turning a YES or NO into UNRESOLVED.
+5. **Settle.** Anyone calls `finalize`. On a decisive outcome the winners split the pool in proportion to their winning stakes (floor division, the rounding remainder to the largest winning position), minus a 0.0001 GEN protocol fee when the pool exceeds it. If the appeal verdict stood, the appellant's bond joins the pool before the split; if the appeal changed the outcome, the bond goes back to the appellant. On UNRESOLVED, every trader is refunded their full stake and no fee is taken — the market never forces a guess. A market where only one side was ever staked also settles as a full refund. **Whatever the outcome, the creator bond returns in full to the creator's pot at finalize.**
+6. **Withdraw.** Settlements land in per-market claimable pots. Withdrawals are pull-pattern: `claim_payout` starts the transfer, `confirm_withdrawal` completes it once the GEN has landed. A pending withdrawal can be returned to claimable by `restore_pending` only once it is at least 24 hours old **and** the contract physically holds enough GEN to back the entire pending pool — a transfer still in flight can never be restored and paid twice. If a transfer landed but was never confirmed, `write_off_pending` clears the accounting after 30 days without re-crediting the pot, so one abandoned withdrawal can never block everyone else's restores.
+
+## Exits that never depend on the jury
+
+A creator can cancel a market only while it holds no stakes — and cancelling returns the creator bond in full. A market with stakes ends by resolution or not at all — except for the expiry voids: a market that was never resolved can be voided 30 days after its resolution time, and a market stuck on an unanswered appeal can be voided 7 days after its verdict, both with full stake refunds and no fee. **On a void, the creator bond splits pro-rata across all stakes** (floor division, the rounding remainder to the largest total stake), so a creator who abandons a market compensates the traders who trusted it instead of taking the bond back. A resolved market with no appeal pending can always be finalized, so its funds can never be stranded.
+
+## Reading the contract
+
+All state is public and readable without a wallet. Views: `get_market` (the market record — including the creator bond and its state — plus its implied YES odds in basis points and total pool), `get_position`, `get_claimable`, `get_pending`, `get_overview` (market count, the total written off, and the accounted totals — locked, claimable, in transit — next to the raw contract balance).
+
+Write methods (13): `create_market`, `buy`, `cancel_market`, `resolve`, `appeal`, `finalize`, `void_market`, `claim_payout`, `confirm_withdrawal`, `restore_pending`, `write_off_pending`, `transfer_ownership`, `accept_ownership`.
+
+Every rejected call raises a named error (for example `BAD_BOND`, `BAD_SOURCES`, `STAKE_TOO_SMALL`, `MARKET_FULL`, `APPEAL_ALREADY_FILED`, `PENDING_TOO_YOUNG`, `INSUFFICIENT_BACKING`) and changes no state and moves no funds.
+
+## The dApp
+
+The dApp is a trading-terminal market board: a grid of market cards, each with the question, a live implied-odds bar, the total pool, a countdown, a state chip, and the creator bond's state. Opening a market shows the committed criteria and the three sources exactly as stored, both pools, your position, and a settlement preview once a verdict lands. The create form states the immutability plainly next to the submit button and shows the bond the creator is posting. The purse shows any pending withdrawal with its age; Settings carries the write-off tool for an abandoned one. Settings can also point the app at the production contract, the proof twin, or any CallIt deployment.
+
+## Verification
+
+- The contract source in this repo is byte-identical to the deployed production source (SHA-256 above, also readable from the deploy transaction).
+- Offline test suite (`tests/test_pure.py`, stubbed GenVM): **39/39 passing** — creation validation including the bond, trading gates, the settlement arithmetic for decisive, refund, and one-sided markets, the appeal bond in both dispositions, the creator bond across finalize, void-split, and cancel, the void gates, and the withdrawal age and backing rules, with fund conservation asserted after every scenario.
+- Full live proof ran through the dApp on a fast-clock twin of this contract (twin `0x767E4E02ae17367F613c412bd84A6190ca6a6f8E`): four markets exercised the bond's whole lifecycle — a decisive YES market returned the bond to its creator at finalize while the winners split the pool to the wei; a voided market split the bond pro-rata across the stakes to the wei, remainder included; a cancelled market returned the bond in full; and an UNRESOLVED market refunded every stake exactly with the bond back. A restore attempted 121 seconds after a claim was rejected on chain with `PENDING_TOO_YOUNG` and the pending withdrawal stood untouched until it landed and confirmed normally. Eight purses were claimed and confirmed, the twin ended at exactly zero, and fund conservation held at all 37 checkpoints. Full record in `PROOF.md`.
+- Production is live with two open markets, each carrying its held 0.005 GEN creator bond — including "Is GEN listed with a live price page on both CoinMarketCap and CoinGecko?" — pools 0.015 GEN YES / 0.005 GEN NO across 3 traders, closing 18 November 2026 with resolution opening 19 November 2026. Locked funds equal the contract balance exactly: 45,000,000,000,000,000 wei (stakes plus both bonds).
+
+One read-path note: the JavaScript client's bare-string views (such as `get_claimable`) can round by a wei or two at magnitudes above 10^16, because they pass through float53. The contract's own accounting is exact — the string views (`get_pending`) and the overview counters agree to the wei, and the live proof verified payouts against them.
