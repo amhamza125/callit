@@ -32,6 +32,8 @@ Every rejected call raises a named error (for example `BAD_BOND`, `BAD_SOURCES`,
 
 The dApp is a trading-terminal market board: a grid of market cards, each with the question, a live implied-odds bar, the total pool, a countdown, a state chip, and the creator bond's state. Opening a market shows the committed criteria and the three sources exactly as stored, both pools, your position, and a settlement preview once a verdict lands. The create form states the immutability plainly next to the submit button and shows the bond the creator is posting. The purse shows any pending withdrawal with its age; Settings carries the write-off tool for an abandoned one. Settings can also point the app at the production contract, the proof twin, or any CallIt deployment.
 
+Source: `dapp/` in this repo (Vite + React — `npm install && npm run build`, verified to build clean from a fresh checkout). It talks to the production contract above by default (`dapp/src/lib/config.js`), switchable in Settings. Calls per screen: board → `get_overview` / `get_market` / `get_position`; create form → `create_market`; market panel → `buy` / `resolve` / `appeal` / `finalize` / `void_market`; purse → `claim_payout` / `confirm_withdrawal` / `restore_pending` / `write_off_pending`. Reads use `gen_call` against the node RPC with no wallet; writes go through the user's injected wallet.
+
 ## Verification
 
 - The contract source in this repo is byte-identical to the deployed production source (SHA-256 above, also readable from the deploy transaction).
